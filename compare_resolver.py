@@ -156,11 +156,16 @@ def _pad_window(f, which: str):
     return pad.id, (f.arrival_time, f.arrival_time + pad.max_dwell)
 
 
-def _pad_channel_conflicts(flights, which: str):
-    """Xung đột bãi đỗ theo kênh: 'takeoff' (bãi đỗ đi) hoặc 'landing' (bãi đỗ đến)."""
+def _landing_pad_conflicts(flights):
+    """Xung đột bề mặt pad HẠ CÁNH (đúng ràng buộc C4 của scrp_simple).
+
+    scrp_simple chỉ ràng buộc bề mặt pad khi hạ cánh (pad bận
+    ``occupation_duration`` sau chạm đất). Cất cánh chỉ chiếm KHÔNG PHẬN (C2),
+    không phải bề mặt pad — nên KHÔNG có kênh 'bãi đỗ cất cánh' riêng.
+    """
     groups: Dict[int, List[Tuple[float, float, int]]] = {}
     for f in flights:
-        pad_id, w = _pad_window(f, which)
+        pad_id, w = _pad_window(f, "landing")
         groups.setdefault(pad_id, []).append((w[0], w[1], f.id))
     conflicted = set()
     for items in groups.values():
@@ -173,25 +178,35 @@ def _pad_channel_conflicts(flights, which: str):
 
 
 def detect_phases(flights, airspace, dt=1.0):
-    """Trả về dict pha -> tập id KHB dính xung đột (kèm tách bãi đỗ)."""
-    to_c, _ = C.detect_takeoff_conflicts(flights, eps=EPS_T)
-    la_c, _ = C.detect_landing_conflicts(flights, eps=EPS_T)
-    en_c, _ = C.detect_enroute_conflicts(flights, airspace, dt=dt, eps_m=EPS_M)
-    pk_to = _pad_channel_conflicts(flights, "takeoff")
-    pk_la = _pad_channel_conflicts(flights, "landing")
-    pk_c = pk_to | pk_la
-    out = {"takeoff": to_c, "landing": la_c, "enroute": en_c, "parking": pk_c,
-           "parking_takeoffpad": pk_to, "parking_landingpad": pk_la}
+    """Xung đột theo đúng bốn ràng buộc của scrp_simple (C1..C4).
+
+    Khoảng cách an toàn dùng ``airspace.pairwise_safety`` — để khớp mô hình
+    scrp_simple (MIN_SEPARATION = 50m cố định), gọi ``unify_safety`` trước.
+    """
+    to_c, _ = C.detect_takeoff_conflicts(flights, eps=EPS_T)         # C2
+    la_c, _ = C.detect_landing_conflicts(flights, eps=EPS_T)         # C3
+    en_c, _ = C.detect_enroute_conflicts(flights, airspace, dt=dt, eps_m=EPS_M)  # C1
+    pk_c = _landing_pad_conflicts(flights)                           # C4
+    out = {"takeoff": to_c, "landing": la_c, "enroute": en_c, "parking": pk_c}
     out["any"] = to_c | la_c | en_c | pk_c
     return out
 
 
-PHASES = ["takeoff", "landing", "enroute", "parking",
-          "parking_takeoffpad", "parking_landingpad", "any"]
+def unify_safety(airspace):
+    """Đặt bán kính an toàn của MỌI loại drone = min_safety (50m).
+
+    scrp_simple không có MSD theo loại (drone_type chỉ là chuỗi) và enforce
+    MIN_SEPARATION_M = 50 cố định; đối chứng vì vậy dùng 50m thống nhất.
+    """
+    for d in airspace.drone_types:
+        d.safety_radius = airspace.min_safety
+
+
+PHASES = ["takeoff", "landing", "enroute", "parking", "any"]
 LABELS = {
-    "takeoff": "Cất cánh", "landing": "Hạ cánh", "enroute": "Trên hành trình",
-    "parking": "Bãi đỗ (tổng)", "parking_takeoffpad": "  ├ bãi đỗ cất cánh",
-    "parking_landingpad": "  └ bãi đỗ hạ cánh", "any": "Toàn kế hoạch bay",
+    "takeoff": "Cất cánh (C2)", "landing": "Hạ cánh (C3)",
+    "enroute": "Trên hành trình (C1)", "parking": "Bãi đỗ hạ cánh (C4)",
+    "any": "Toàn kế hoạch bay",
 }
 
 
@@ -312,6 +327,11 @@ def main():
     ap.add_argument("--airspace-seed", type=int, default=7)
     ap.add_argument("--dt", type=float, default=1.0)
     ap.add_argument("--sweep", type=int, nargs="*", default=[10, 20, 30, 40, 50, 60])
+    ap.add_argument("--maxwait-sweep", type=float, nargs="*",
+                    default=[15, 30, 60, 120, 300, 600],
+                    help="quét max_wait (tại mật độ --maxwait-N) để xem đánh đổi từ chối")
+    ap.add_argument("--maxwait-N", type=int, default=60,
+                    help="mật độ dùng cho quét max_wait")
     ap.add_argument("--no-plots", action="store_true")
     args = ap.parse_args()
 
@@ -319,9 +339,12 @@ def main():
     M, resolve_batch = load_resolver(args.resolver_path)
     airspace = build_airspace(np.random.default_rng(args.airspace_seed),
                               num_routes=10, num_types=10)
+    unify_safety(airspace)   # khớp mô hình scrp_simple: 50m thống nhất
 
     print(f"So sánh Baseline vs time-departure — {args.trials} trial, "
           f"max_wait {args.max_wait:.0f}s, horizon {args.horizon/60:.0f} phút")
+    print("Mô hình khớp scrp_simple: ràng buộc pad = HẠ CÁNH (C4); "
+          "khoảng cách an toàn 50m thống nhất")
 
     main_res = run_compare(airspace, M, resolve_batch, args.flights,
                            args.horizon, args.max_wait, args.trials,
@@ -344,11 +367,29 @@ def main():
                   f"trễ TB={r['delay_mean']:5.1f}s")
         out_json["sweep"] = sweep
 
+    if args.maxwait_sweep:
+        print(f"\nQuét max_wait tại N={args.maxwait_N} "
+              f"(xung đột luôn 0; đổi lấy từ chối/trễ):")
+        mw_sweep = []
+        for mw in args.maxwait_sweep:
+            r = run_compare(airspace, M, resolve_batch, args.maxwait_N,
+                            args.horizon, mw, max(400, args.trials // 2),
+                            args.seed, dt=args.dt)
+            r["max_wait"] = mw
+            mw_sweep.append(r)
+            print(f"  max_wait={mw:5.0f}s: resolved any={r['resolved']['any']*100:4.2f}%  "
+                  f"từ chối={r['rejection_rate']*100:5.2f}%  "
+                  f"trễ TB={r['delay_mean']:5.1f}s")
+        out_json["maxwait_sweep"] = mw_sweep
+
     if not args.no_plots:
         print("\nVẽ hình:")
         plot_compare(main_res, os.path.join(OUT, "baseline_vs_resolved.png"))
         if args.sweep:
             plot_sweep(out_json["sweep"], os.path.join(OUT, "resolver_sweep.png"))
+        if args.maxwait_sweep:
+            plot_maxwait(out_json["maxwait_sweep"], args.maxwait_N,
+                         os.path.join(OUT, "resolver_maxwait.png"))
 
     with open(os.path.join(OUT, "compare_results.json"), "w") as f:
         json.dump(out_json, f, indent=2, ensure_ascii=False)
@@ -383,6 +424,41 @@ def plot_sweep(sweep, path):
     l2, la2 = ax2.get_legend_handles_labels()
     ax1.legend(l1 + l2, la1 + la2, loc="upper left", fontsize=8)
     ax1.set_title("time-departure: chi phí (trễ, từ chối) đổi lấy an toàn theo mật độ")
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    print(f"  đã lưu: {path}")
+
+
+def plot_maxwait(sweep, N, path):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    mw = [r["max_wait"] for r in sweep]
+    rej = [r["rejection_rate"] * 100 for r in sweep]
+    res_any = [r["resolved"]["any"] * 100 for r in sweep]
+    delay = [r["delay_mean"] for r in sweep]
+
+    fig, ax1 = plt.subplots(figsize=(9.5, 5.5))
+    ax1.plot(mw, rej, "^-", color="#4C72B0", label="Tỉ lệ từ chối")
+    ax1.plot(mw, res_any, "s-", color="#55A868",
+             label="P(xung đột) sau điều phối")
+    ax1.set_xlabel("max_wait — độ trễ tối đa cho phép (s)")
+    ax1.set_ylabel("Phần trăm (%)")
+    ax1.grid(True, alpha=0.3)
+
+    ax2 = ax1.twinx()
+    ax2.plot(mw, delay, "d:", color="#8172B3", label="Trễ TB của chuyến được duyệt (s)")
+    ax2.set_ylabel("Độ trễ trung bình (s)", color="#8172B3")
+    ax2.tick_params(axis="y", labelcolor="#8172B3")
+
+    l1, la1 = ax1.get_legend_handles_labels()
+    l2, la2 = ax2.get_legend_handles_labels()
+    ax1.legend(l1 + l2, la1 + la2, loc="center right", fontsize=8)
+    ax1.set_title(f"Đánh đổi từ chối ↔ độ trễ (N={N}); xung đột luôn = 0\n"
+                  f"max_wait chặt → nhiều từ chối hơn, nhưng chuyến bị từ chối "
+                  f"KHÔNG tính vi phạm")
     fig.tight_layout()
     fig.savefig(path, dpi=120)
     plt.close(fig)

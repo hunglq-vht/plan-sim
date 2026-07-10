@@ -14,8 +14,9 @@ một thuật toán tránh xung đột sẽ phải kéo về 0.
 > [`docs/theory.md`](docs/theory.md).
 >
 > 🔀 **Đối chứng baseline vs thuật toán điều phối** (ghép bộ giải xung đột
-> `scrp_simple` của repo time-departure: xoá sạch cất/hạ cánh & bãi đỗ hạ cánh,
-> giảm >50% "toàn KHB" với trễ vài giây): xem
+> `scrp_simple` của repo time-departure, khớp đúng mô hình C1–C4: **xác suất
+> xung đột về 0** ở cả bốn pha & mọi mật độ, chỉ mất vài giây trễ; ép max_wait
+> nhỏ thì đổi lấy một phần bị từ chối): xem
 > [`docs/comparison.md`](docs/comparison.md).
 
 ---
