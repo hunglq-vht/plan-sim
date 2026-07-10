@@ -12,6 +12,11 @@ một thuật toán tránh xung đột sẽ phải kéo về 0.
 > 📐 **Mô hình giải tích & phân tích giới hạn** của xác suất xung đột (công thức
 > đóng `P_p = 1 − e^(−(N−1)a_p/T)`, các giới hạn, đối chiếu với mô phỏng): xem
 > [`docs/theory.md`](docs/theory.md).
+>
+> 🔀 **Đối chứng baseline vs thuật toán điều phối** (ghép bộ giải xung đột
+> `scrp_simple` của repo time-departure: xoá sạch cất/hạ cánh & bãi đỗ hạ cánh,
+> giảm >50% "toàn KHB" với trễ vài giây): xem
+> [`docs/comparison.md`](docs/comparison.md).
 
 ---
 
