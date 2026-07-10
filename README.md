@@ -9,6 +9,10 @@ Bãi đỗ** — và cho **toàn kế hoạch bay**.
 nhiên và độc lập, không nhường nhau. Con số thu được chính là mức rủi ro nền mà
 một thuật toán tránh xung đột sẽ phải kéo về 0.
 
+> 📐 **Mô hình giải tích & phân tích giới hạn** của xác suất xung đột (công thức
+> đóng `P_p = 1 − e^(−(N−1)a_p/T)`, các giới hạn, đối chiếu với mô phỏng): xem
+> [`docs/theory.md`](docs/theory.md).
+
 ---
 
 ## 1. Mô hình mô phỏng
